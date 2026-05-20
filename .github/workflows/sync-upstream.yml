@@ -1,0 +1,66 @@
+name: Sync from upstream paperclipai/paperclip
+
+# BiVelio Orchestrator — mantiene master sincronizado con upstream paperclipai/paperclip
+# preservando los workflows propios de Chronos-Technology (este archivo + build-image.yml).
+#
+# Trigger: lunes 06:00 UTC (semanal) o manual desde Actions tab.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "bivelio-sync-bot"
+          git config user.email "bivelio-sync-bot@chronos-technology.users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/paperclipai/paperclip.git
+
+      - name: Fetch upstream
+        run: git fetch upstream master --tags
+
+      - name: Merge upstream/master (preserve BiVelio workflows)
+        run: |
+          set -e
+          if git merge upstream/master --no-edit; then
+            echo "Merge clean."
+          else
+            echo "Conflict detected — restoring BiVelio-owned workflow files..."
+            git checkout HEAD -- .github/workflows/sync-upstream.yml .github/workflows/build-image.yml
+            # Si hay otros conflicts no relacionados con workflows, abortar y avisar
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            if [ -n "$CONFLICTS" ]; then
+              echo "::error::Conflicts no resueltos: $CONFLICTS"
+              git merge --abort
+              exit 1
+            fi
+            git add .github/workflows/
+            git commit --no-edit
+          fi
+
+      - name: Push to master + tags
+        run: |
+          git push origin master
+          git push origin --tags
+
+      - name: Report
+        if: always()
+        run: |
+          echo "Sync run: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Master HEAD: $(git rev-parse --short HEAD)"
+          echo "Tags count: $(git tag | wc -l)"
